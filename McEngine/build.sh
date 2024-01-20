@@ -15,7 +15,7 @@ CFLAGS="-O3 -Wall -c -fmessage-length=0"
 
 LDFLAGS=""
 LDFLAGS2=("-static-libstdc++" "-static-libgcc" "-Wl,-rpath=.")
-LDLIBS="-ldiscord-rpc -lsteam_api -lcurl -lz -lX11 -lXi -lGL -lGLU -lGLEW -lfreetype -lbass -lbass_fx -lOpenCL -lBulletSoftBody -lBulletDynamics -lBulletCollision -lLinearMath -lenet -lpthread -ljpeg"
+LDLIBS="-ldiscord-rpc -lsteam_api -lcurl -lz -lX11 -lXi -lGL -lGLU -lGLEW -lfreetype -lbass -lbass_fx -lbassmix -lOpenCL -lBulletSoftBody -lBulletDynamics -lBulletCollision -lLinearMath -lenet -lpthread -ljpeg -lSDL2"
 
 
 
