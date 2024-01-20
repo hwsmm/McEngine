@@ -76,7 +76,7 @@ int mainSDL(int argc, char *argv[], SDLEnvironment *customSDLEnvironment)
 
 #endif
 
-#ifdef MCENGINE_FEATURE_SDL_MIXER
+#if defined(MCENGINE_FEATURE_SDL_MIXER) || defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	flags |= SDL_INIT_AUDIO;
 

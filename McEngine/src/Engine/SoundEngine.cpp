@@ -72,15 +72,38 @@ void *_soundEngineThread(void *data);
 
 #endif
 
+#ifdef MCENGINE_FEATURE_SDL
 
+#include "SDL.h"
+#include "SDL_audio.h"
+
+#ifdef MCENGINE_FEATURE_SDL_MIXER
+#include "SDL_mixer.h"
+#endif
+
+#endif
+
+#if defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_AUDIO)
+
+#define MCENGINE_FEATURE_BASS_WASAPI
+
+SDL_AudioDeviceID g_sdlAudioDevId = 0;
+// for some reason, mcengine seems to utilize two instances of soundengine, but callback uses global state
+// so we can only use one sdl device
+
+
+
+#endif
 
 #ifdef MCENGINE_FEATURE_BASS_WASAPI
 
-#include <basswasapi.h>
 #include <bassmix.h>
 
 Sound::SOUNDHANDLE g_wasapiOutputMixer = 0;
 
+#ifndef MCENGINE_FEATURE_SDL_AUDIO
+
+#include <basswasapi.h>
 DWORD CALLBACK OutputWasapiProc(void *buffer, DWORD length, void *user)
 {
 	if (g_wasapiOutputMixer != 0)
@@ -95,13 +118,19 @@ DWORD CALLBACK OutputWasapiProc(void *buffer, DWORD length, void *user)
 
 	return 0;
 }
+#else
+
+void AudioCallbackSDL(void *userdata, uint8_t *stream, int len)
+{
+	if (g_wasapiOutputMixer != 0)
+	{
+		int length = BASS_ChannelGetData(g_wasapiOutputMixer, (void*)stream, len);
+		if (length < len)
+			memset(stream + length, 0, len - length);
+	}
+}
 
 #endif
-
-#if defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_MIXER)
-
-#include "SDL.h"
-#include "SDL_mixer.h"
 
 #endif
 
@@ -124,7 +153,7 @@ ConVar snd_change_check_interval("snd_change_check_interval", 0.0f, "check for o
 
 
 
-#ifdef MCENGINE_FEATURE_BASS_WASAPI
+#if defined(MCENGINE_FEATURE_BASS_WASAPI) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 void _WIN_SND_WASAPI_BUFFER_SIZE_CHANGE(UString oldValue, UString newValue);
 void _WIN_SND_WASAPI_PERIOD_SIZE_CHANGE(UString oldValue, UString newValue);
@@ -210,6 +239,7 @@ SoundEngine::SoundEngine()
 
 	BASS_SetConfig(BASS_CONFIG_UPDATEPERIOD, 0);
 	BASS_SetConfig(BASS_CONFIG_UPDATETHREADS, 0);
+	BASS_SetConfig(BASS_CONFIG_MIXER_BUFFER, 1);
 
 #else
 
@@ -286,7 +316,7 @@ SoundEngine::SoundEngine()
 
 void SoundEngine::updateOutputDevices(bool handleOutputDeviceChanges, bool printInfo)
 {
-#ifdef MCENGINE_FEATURE_SOUND
+#if defined(MCENGINE_FEATURE_SOUND) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	///int currentOutputDeviceBASSIndex = BASS_GetDevice();
 
@@ -440,9 +470,24 @@ bool SoundEngine::initializeOutputDevice(int id)
 	// cleanup potential previous device
 	BASS_Free();
 
-#ifdef MCENGINE_FEATURE_BASS_WASAPI
+#if defined(MCENGINE_FEATURE_BASS_WASAPI) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	BASS_WASAPI_Free();
+
+#endif
+
+#ifdef MCENGINE_FEATURE_SDL_AUDIO
+
+	if (g_sdlAudioDevId > 0)
+	{
+		SDL_CloseAudioDevice(g_sdlAudioDevId);
+		g_sdlAudioDevId = 0;
+		debugLog("Closed the previous SDL Audio Device!\n");
+	}
+	else
+	{
+		debugLog("First init of SDL Audio! %u\n", g_sdlAudioDevId);
+	}
 
 #endif
 
@@ -464,6 +509,8 @@ bool SoundEngine::initializeOutputDevice(int id)
 	const unsigned int flags = /* BASS_DEVICE_3D | */ runtimeFlags;
 	bool ret = false;
 
+#ifndef MCENGINE_FEATURE_SDL_AUDIO
+
 #if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || defined(__CYGWIN__) || defined(__CYGWIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
 
 	int idForBassInit = id;
@@ -480,6 +527,43 @@ bool SoundEngine::initializeOutputDevice(int id)
 #else
 
 	ret = BASS_Init(id, freq, flags, 0, NULL);
+
+#endif
+
+#else
+
+	SDL_AudioSpec desired, got;
+	SDL_zero(desired);
+	desired.freq = freq;
+	desired.format = AUDIO_F32;
+	desired.channels = 2;
+	desired.samples = 128;
+	desired.callback = AudioCallbackSDL;
+	
+	char *latency = getenv("MCOSU_SDL_LATENCY");
+	if (latency != NULL)
+	{
+		int val = atoi(latency);
+		if (val > 0)
+		{
+			debugLog("Using custom latency value: %u\n", val);
+			desired.samples = val;
+		}
+	}
+
+	g_sdlAudioDevId = SDL_OpenAudioDevice(NULL, 0, &desired, &got, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+	ret = g_sdlAudioDevId > 0;
+
+	if (ret)
+	{
+		debugLog("SDL Audio initalized! Freq: %d, Channels: %hhu, Samples: %u\n", got.freq, got.channels, got.samples);
+		
+		ret = BASS_Init(0, got.freq, flags, 0, NULL); // No Sound
+	}
+	else
+	{
+		engine->showMessageError("Sound Error", UString::format("SDL Audio init error! %s", SDL_GetError()));
+	}
 
 #endif
 
@@ -517,6 +601,8 @@ bool SoundEngine::initializeOutputDevice(int id)
 
 #ifdef MCENGINE_FEATURE_BASS_WASAPI
 
+#ifndef MCENGINE_FEATURE_SDL_AUDIO
+
 	const float bufferSize = std::round(win_snd_wasapi_buffer_size.getFloat() * 1000.0f) / 1000.0f;		// in seconds
 	const float updatePeriod = std::round(win_snd_wasapi_period_size.getFloat() * 1000.0f) / 1000.0f;	// in seconds
 
@@ -549,6 +635,12 @@ bool SoundEngine::initializeOutputDevice(int id)
 
 	g_wasapiOutputMixer = BASS_Mixer_StreamCreate(wasapiInfo.freq, wasapiInfo.chans, BASS_SAMPLE_FLOAT | BASS_STREAM_DECODE | BASS_MIXER_NONSTOP);
 
+#else
+
+	g_wasapiOutputMixer = BASS_Mixer_StreamCreate(got.freq, got.channels, BASS_SAMPLE_FLOAT | BASS_STREAM_DECODE | BASS_MIXER_NONSTOP);
+
+#endif
+
 	if (g_wasapiOutputMixer == 0)
 	{
 		m_bReady = false;
@@ -557,6 +649,8 @@ bool SoundEngine::initializeOutputDevice(int id)
 	}
 
 #endif
+
+#ifndef MCENGINE_FEATURE_SDL_AUDIO
 
 	m_bReady = true;
 
@@ -571,6 +665,14 @@ bool SoundEngine::initializeOutputDevice(int id)
 	debugLog("SoundEngine: Output Device = \"%s\"\n", m_sCurrentOutputDevice.toUtf8());
 
 	return true;
+
+#else
+
+	SDL_PauseAudioDevice(g_sdlAudioDevId, 0); // start playback
+	m_bReady = true;
+	return true;
+
+#endif
 
 #elif defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_MIXER)
 
@@ -643,6 +745,13 @@ SoundEngine::~SoundEngine()
 		Mix_CloseAudio();
 
 	Mix_Quit();
+
+#endif
+
+#ifdef MCENGINE_FEATURE_SDL_AUDIO
+
+	if (g_sdlAudioDevId > 0)
+		SDL_CloseAudioDevice(g_sdlAudioDevId);
 
 #endif
 }
@@ -958,7 +1067,7 @@ void SoundEngine::setOnOutputDeviceChange(std::function<void()> callback)
 
 void SoundEngine::setOutputDevice(UString outputDeviceName)
 {
-#ifdef MCENGINE_FEATURE_SOUND
+#if defined(MCENGINE_FEATURE_SOUND) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	for (size_t i=0; i<m_outputDevices.size(); i++)
 	{
@@ -980,7 +1089,7 @@ void SoundEngine::setOutputDevice(UString outputDeviceName)
 
 	debugLog("SoundEngine::setOutputDevice() couldn't find output device \"%s\"!\n", outputDeviceName.toUtf8());
 
-#elif defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_MIXER)
+#elif defined(MCENGINE_FEATURE_SDL) && (defined(MCENGINE_FEATURE_SDL_MIXER) || defined(MCENGINE_FEATURE_SDL_AUDIO))
 
 	initializeOutputDevice(-1);
 
@@ -989,7 +1098,7 @@ void SoundEngine::setOutputDevice(UString outputDeviceName)
 
 void SoundEngine::setOutputDeviceForce(UString outputDeviceName)
 {
-#ifdef MCENGINE_FEATURE_SOUND
+#if defined(MCENGINE_FEATURE_SOUND) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	for (size_t i=0; i<m_outputDevices.size(); i++)
 	{
@@ -1011,7 +1120,7 @@ void SoundEngine::setOutputDeviceForce(UString outputDeviceName)
 
 	debugLog("SoundEngine::setOutputDevice() couldn't find output device \"%s\"!\n", outputDeviceName.toUtf8());
 
-#elif defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_MIXER)
+#elif defined(MCENGINE_FEATURE_SDL) && (defined(MCENGINE_FEATURE_SDL_MIXER) || defined(MCENGINE_FEATURE_SDL_AUDIO))
 
 	initializeOutputDevice(-1);
 
@@ -1031,7 +1140,7 @@ void SoundEngine::setVolume(float volume)
 	BASS_SetConfig(BASS_CONFIG_GVOL_STREAM, (DWORD)(m_fVolume*10000));
 	BASS_SetConfig(BASS_CONFIG_GVOL_MUSIC, (DWORD)(m_fVolume*10000));
 
-#ifdef MCENGINE_FEATURE_BASS_WASAPI
+#if defined(MCENGINE_FEATURE_BASS_WASAPI) && !defined(MCENGINE_FEATURE_SDL_AUDIO)
 
 	BASS_WASAPI_SetVolume(BASS_WASAPI_CURVE_WINDOWS | (!win_snd_wasapi_exclusive.getBool() && !win_snd_wasapi_shared_volume_affects_device.getBool() ? BASS_WASAPI_VOL_SESSION : 0), m_fVolume);
 

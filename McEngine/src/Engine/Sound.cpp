@@ -9,6 +9,22 @@
 #include "ConVar.h"
 #include "File.h"
 
+#ifdef MCENGINE_FEATURE_SDL
+
+#include "SDL.h"
+
+#if defined(MCENGINE_FEATURE_SDL_MIXER)
+
+#include "SDL_mixer_ext.h"
+
+#elif defined(MCENGINE_FEATURE_SDL_AUDIO)
+
+#define MCENGINE_FEATURE_BASS_WASAPI
+
+#endif
+
+#endif
+
 #ifdef MCENGINE_FEATURE_SOUND
 
 #include <bass.h>
@@ -19,11 +35,6 @@
 #include <bassmix.h>
 
 #endif
-
-#elif defined(MCENGINE_FEATURE_SDL) && defined(MCENGINE_FEATURE_SDL_MIXER)
-
-#include "SDL.h"
-#include "SDL_mixer_ext.h"
 
 #endif
 
@@ -137,14 +148,14 @@ void Sound::initAsync()
 		DWORD extraStreamCreateFileFlags = 0;
 		DWORD extraFXTempoCreateFlags = 0;
 
-#if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || defined(__CYGWIN__) || defined(__CYGWIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
-
 #ifdef MCENGINE_FEATURE_BASS_WASAPI
 
 		extraStreamCreateFileFlags |= BASS_SAMPLE_FLOAT;
 		extraFXTempoCreateFlags |= BASS_STREAM_DECODE;
 
 #endif
+
+#if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || defined(__CYGWIN__) || defined(__CYGWIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
 
 		m_HSTREAM = BASS_StreamCreateFile(FALSE, m_sFilePath.wc_str(), 0, 0, (m_bPrescan ? BASS_STREAM_PRESCAN : 0) | BASS_STREAM_DECODE | BASS_UNICODE | extraStreamCreateFileFlags);
 
@@ -169,8 +180,6 @@ void Sound::initAsync()
 	else // not a stream
 	{
 
-#if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || defined(__CYGWIN__) || defined(__CYGWIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
-
 #ifdef MCENGINE_FEATURE_BASS_WASAPI
 
 		File file(m_sFilePath);
@@ -186,12 +195,9 @@ void Sound::initAsync()
 		else
 			printf("Sound Error: Couldn't file.canRead() on file %s\n", m_sFilePath.toUtf8());
 
-#else
+#elif defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || defined(__CYGWIN__) || defined(__CYGWIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
 
 		m_HSTREAM = BASS_SampleLoad(FALSE, m_sFilePath.wc_str(), 0, 0, 5, (m_bIsLooped ? BASS_SAMPLE_LOOP : 0 ) | (m_bIs3d ? BASS_SAMPLE_3D | BASS_SAMPLE_MONO : 0) | BASS_SAMPLE_OVER_POS | BASS_UNICODE);
-
-#endif
-
 
 #elif defined __linux__
 

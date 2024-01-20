@@ -71,12 +71,17 @@
 /*
  * SDL2 main + Environment
  */
-//#define MCENGINE_FEATURE_SDL
+#define MCENGINE_FEATURE_SDL
 
 /*
  * SDL2 mixer (audio)
  */
 //#define MCENGINE_FEATURE_SDL_MIXER
+
+/*
+ * SDL2 Audio with BASSMix
+ */
+#define MCENGINE_FEATURE_SDL_AUDIO
 
 /*
  * Discord RPC (rich presence)
